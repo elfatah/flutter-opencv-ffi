@@ -23,6 +23,29 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Android-only slice: arm64 only. Covers physical arm64 devices and
+        // Apple-Silicon emulators; halves native payload vs multi-ABI. (Size hook #4.)
+        //
+        // TWO filters are required and do different jobs:
+        //  * externalNativeBuild.cmake.abiFilters  -> which ABIs CMake actually BUILDS
+        //  * ndk.abiFilters                        -> which ABIs get PACKAGED into the apk
+        // Setting only the latter still compiles (and could ship) all ABIs.
+        externalNativeBuild {
+            cmake {
+                abiFilters += "arm64-v8a"
+            }
+        }
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    // Build the native FFI library (libnative_opencv.so) via CMake.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     buildTypes {

@@ -1,121 +1,193 @@
+// TOOLCHAIN PROBE — TEMPORARY. Delete once real architecture lands.
+//
+// This file deliberately uses dart:ffi directly and does NOT follow the
+// "dart:ffi in exactly two files" rule. It exists only to prove the native
+// boundary works end to end before any OpenCV or real Dart logic is written:
+//   * libnative_opencv.so builds and loads (DynamicLibrary.open)
+//   * the out-pointer struct is filled by C++ and read back in Dart
+//   * the image-buffer path and the scalar path both round-trip
+//   * opencv_free_buffer frees C-allocated memory without crashing
+//
+// Run on a connected arm64 device/emulator:  flutter run
+// Expect the screen to show ALL CHECKS PASSED with the stub values.
+
+import 'dart:ffi';
+import 'dart:typed_data';
+
+import 'package:ffi/ffi.dart'; // malloc
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
+// --- Dart mirror of the C contract (native_opencv.h) ---------------------
+
+// Mirrors: typedef struct { uint8_t* data; int32_t data_len; double scalar; }
+// Field order matches C; Dart computes ABI padding (the double lands at the
+// 8-aligned offset 16 after the int32 + 4 bytes padding) automatically.
+final class OpenCvResult extends Struct {
+  external Pointer<Uint8> data;
+
+  @Int32()
+  external int dataLen;
+
+  @Double()
+  external double scalar;
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// int32_t opencv_process(const uint8_t*, int32_t, int32_t, OpenCvResult*)
+typedef _ProcessNative =
+    Int32 Function(Pointer<Uint8>, Int32, Int32, Pointer<OpenCvResult>);
+typedef _ProcessDart =
+    int Function(Pointer<Uint8>, int, int, Pointer<OpenCvResult>);
 
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+// void opencv_free_buffer(uint8_t*)
+typedef _FreeNative = Void Function(Pointer<Uint8>);
+typedef _FreeDart = void Function(Pointer<Uint8>);
+
+const int opGrayscale = 0;
+const int opBlurScore = 1;
+
+class _Native {
+  _Native._(this.process, this.freeBuffer);
+
+  final _ProcessDart process;
+  final _FreeDart freeBuffer;
+
+  static _Native open() {
+    final lib = DynamicLibrary.open('libnative_opencv.so');
+    return _Native._(
+      lib.lookupFunction<_ProcessNative, _ProcessDart>('opencv_process'),
+      lib.lookupFunction<_FreeNative, _FreeDart>('opencv_free_buffer'),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+// --- Probe logic ---------------------------------------------------------
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
+/// One line per check, with pass/fail, accumulated into the report.
+class ProbeReport {
+  final List<String> lines = [];
+  bool ok = true;
 
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  void check(String label, bool passed, [String detail = '']) {
+    ok = ok && passed;
+    lines.add('${passed ? "✅" : "❌"} $label${detail.isEmpty ? "" : " — $detail"}');
+  }
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+ProbeReport runProbe() {
+  final r = ProbeReport();
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  final _Native native;
+  try {
+    native = _Native.open();
+    r.check('DynamicLibrary.open(libnative_opencv.so)', true);
+  } catch (e) {
+    r.check('DynamicLibrary.open(libnative_opencv.so)', false, '$e');
+    return r; // nothing else can run without the library
   }
+
+  // --- Image-buffer path: OP_GRAYSCALE returns {0xDE,0xAD,0xBE,0xEF} ---
+  {
+    // Dart owns the input buffer AND the result struct; both freed in finally.
+    final input = malloc<Uint8>(1)..value = 0;
+    final out = malloc<OpenCvResult>();
+    try {
+      final status = native.process(input, 1, opGrayscale, out);
+      r.check('grayscale status == CV_OK(0)', status == 0, 'got $status');
+
+      final dataPtr = out.ref.data;
+      final len = out.ref.dataLen;
+      r.check('grayscale data non-null', dataPtr != nullptr);
+      r.check('grayscale data_len == 4', len == 4, 'got $len');
+
+      if (dataPtr != nullptr && len > 0) {
+        // Copy out into Dart-owned memory, THEN free the C buffer.
+        final bytes = Uint8List.fromList(dataPtr.asTypedList(len));
+        native.freeBuffer(dataPtr); // C allocator frees what it allocated
+        final hex = bytes
+            .map((b) => b.toRadixString(16).padLeft(2, '0'))
+            .join();
+        r.check('grayscale bytes == deadbeef', hex == 'deadbeef', '0x$hex');
+      }
+    } finally {
+      malloc.free(input); // Dart frees Dart-allocated input
+      malloc.free(out); //   Dart frees Dart-allocated result struct
+    }
+  }
+
+  // --- Scalar path: OP_BLUR_SCORE returns scalar 42.0, data == NULL ---
+  {
+    final out = malloc<OpenCvResult>();
+    try {
+      final status = native.process(nullptr, 0, opBlurScore, out);
+      r.check('blur_score status == CV_OK(0)', status == 0, 'got $status');
+      r.check('blur_score data == null', out.ref.data == nullptr);
+      r.check('blur_score scalar == 42.0', out.ref.scalar == 42.0,
+          'got ${out.ref.scalar}');
+    } finally {
+      malloc.free(out);
+    }
+  }
+
+  // --- Error path: unknown op returns CV_ERR_UNKNOWN_OP(-4) ---
+  {
+    final out = malloc<OpenCvResult>();
+    try {
+      final status = native.process(nullptr, 0, 99, out);
+      r.check('unknown op status == -4', status == -4, 'got $status');
+    } finally {
+      malloc.free(out);
+    }
+  }
+
+  return r;
+}
+
+// --- UI ------------------------------------------------------------------
+
+void main() => runApp(const ProbeApp());
+
+class ProbeApp extends StatelessWidget {
+  const ProbeApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
+    final report = runProbe();
+    return MaterialApp(
+      title: 'FFI Toolchain Probe',
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('FFI Toolchain Probe'),
+          backgroundColor: report.ok ? Colors.green : Colors.red,
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+        body: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                report.ok ? 'ALL CHECKS PASSED' : 'CHECKS FAILED',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: report.ok ? Colors.green : Colors.red,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView(
+                  children: report.lines
+                      .map((l) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(l,
+                                style: const TextStyle(
+                                    fontFamily: 'monospace', fontSize: 14)),
+                          ))
+                      .toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
