@@ -177,7 +177,13 @@ A bundled `assets/sample.jpg` is the input image for the demo screen.
 The split is deliberate and is the architectural selling point:
 
 - **Unit (`flutter test`, no device, no `.so`):** `test/features/image_processing/data/repositories/image_processing_repository_impl_test.dart` mocks the `OpenCvDataSource` interface and asserts every `OpenCvException.status` maps to the correct `Failure`, and that success maps to `Right(ProcessedImage)` / `Right(ImageMetric)` — both return shapes. This is everything *above* the boundary.
-- **Integration (device-only):** the FFI round-trip itself (real `.so`, real `malloc`/copy/free) — see [roadmap](#current-scope--roadmap).
+- **Integration (on-device):** `integration_test/ffi_roundtrip_test.dart` wires the **real** `OpenCvFfiDataSource` (unmocked) and runs on a device — it loads the actual `libnative_opencv.so` and exercises the real FFI round-trip (real `malloc`/copy/free): grayscale returns a valid, image-sized PNG; blur-score returns a finite, positive Laplacian variance; and invalid input surfaces `DecodeFailure` end-to-end through real FFI. This is the boundary's *mechanism*, complementing the unit test's *payoff* — with both halves real, the unit-vs-integration split is now fully demonstrated. Run it with a device/emulator attached:
+
+```bash
+flutter test integration_test/ffi_roundtrip_test.dart
+```
+
+(NOT plain `flutter test` — that runs on the VM with no `.so` and cannot load the native library.)
 
 The boundary check is a one-liner suitable for CI:
 
@@ -194,7 +200,7 @@ Honest status — two real operations (grayscale image + blur scalar), what is d
 - ✅ **Grayscale is real.** `OP_GRAYSCALE` runs `cv::imdecode` → `cv::cvtColor(BGR2GRAY)` → `cv::imencode(".png")` in C++ and returns the encoded PNG across FFI.
 - ✅ **Blur score is real.** `OP_BLUR_SCORE` runs `cv::imdecode` → `cv::cvtColor(BGR2GRAY)` → `cv::Laplacian(CV_64F)` → `cv::meanStdDev`, and returns the **variance of the Laplacian** (the standard focus/blur measure — higher = sharper, lower = blurrier) as a `double` across FFI. Beyond being a real op, it proves the architecture carries the **scalar return shape** alongside the image shape — both flow through the same single-entrypoint mechanism.
 - 🟡 **iOS is designed-for, not wired.** The loader (`lib/core/native/opencv_native.dart`) already branches to `DynamicLibrary.process()` for iOS; the CMake → `.framework`/static build is not yet done, so iOS will not build today.
-- ⬜ **Pending:** the on-device integration test (`integration_test/`), an image picker (the demo uses a bundled asset), and OpenCV binary-size trimming (custom `BUILD_LIST`).
+- ⬜ **Pending:** an image picker (the demo uses a bundled asset) and OpenCV binary-size trimming (custom `BUILD_LIST`).
 
 ---
 
