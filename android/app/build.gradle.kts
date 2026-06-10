@@ -34,6 +34,10 @@ android {
         externalNativeBuild {
             cmake {
                 abiFilters += "arm64-v8a"
+                // Turn on OpenCV linking. OPENCV_DIR is NOT passed here — the
+                // CMakeLists Option-B default resolves it to the in-repo SDK at
+                // third_party/opencv-android-sdk/. Override only if relocating it.
+                arguments("-DWITH_OPENCV=ON")
             }
         }
         ndk {

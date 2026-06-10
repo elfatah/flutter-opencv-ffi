@@ -1,27 +1,29 @@
-// TOOLCHAIN PROBE — TEMPORARY. Delete once real architecture lands.
+// TOOLCHAIN + GRAYSCALE PROBE — TEMPORARY. Delete once real architecture lands.
 //
 // This file deliberately uses dart:ffi directly and does NOT follow the
-// "dart:ffi in exactly two files" rule. It exists only to prove the native
-// boundary works end to end before any OpenCV or real Dart logic is written:
+// "dart:ffi in exactly two files" rule. It proves the native boundary works
+// end to end before the real architecture is built:
 //   * libnative_opencv.so builds and loads (DynamicLibrary.open)
 //   * the out-pointer struct is filled by C++ and read back in Dart
-//   * the image-buffer path and the scalar path both round-trip
+//   * OP_GRAYSCALE round-trips a REAL image: assets/sample.jpg -> OpenCV
+//     decode/cvtColor/encode -> PNG bytes -> displayed below
+//   * the scalar path (OP_BLUR_SCORE) and error path round-trip
 //   * opencv_free_buffer frees C-allocated memory without crashing
 //
 // Run on a connected arm64 device/emulator:  flutter run
-// Expect the screen to show ALL CHECKS PASSED with the stub values.
+// Expect GREEN "ALL CHECKS PASSED" plus a grayscale image rendered from the
+// bytes OpenCV returned. Requires a real photo at assets/sample.jpg.
 
 import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart'; // malloc
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 // --- Dart mirror of the C contract (native_opencv.h) ---------------------
 
 // Mirrors: typedef struct { uint8_t* data; int32_t data_len; double scalar; }
-// Field order matches C; Dart computes ABI padding (the double lands at the
-// 8-aligned offset 16 after the int32 + 4 bytes padding) automatically.
 final class OpenCvResult extends Struct {
   external Pointer<Uint8> data;
 
@@ -45,6 +47,11 @@ typedef _FreeDart = void Function(Pointer<Uint8>);
 const int opGrayscale = 0;
 const int opBlurScore = 1;
 
+// A real encoded image is far larger than the old 4-byte stub. The 1x1
+// placeholder produces a ~70-byte PNG and will (correctly) fail this — supply a
+// real photo at assets/sample.jpg.
+const int minRealImageBytes = 100;
+
 class _Native {
   _Native._(this.process, this.freeBuffer);
 
@@ -62,10 +69,11 @@ class _Native {
 
 // --- Probe logic ---------------------------------------------------------
 
-/// One line per check, with pass/fail, accumulated into the report.
+/// One line per check plus the grayscale bytes (for rendering).
 class ProbeReport {
   final List<String> lines = [];
   bool ok = true;
+  Uint8List? grayscaleResult; // PNG bytes returned by OpenCV, for display
 
   void check(String label, bool passed, [String detail = '']) {
     ok = ok && passed;
@@ -73,7 +81,7 @@ class ProbeReport {
   }
 }
 
-ProbeReport runProbe() {
+ProbeReport runProbe(Uint8List sampleBytes) {
   final r = ProbeReport();
 
   final _Native native;
@@ -82,39 +90,47 @@ ProbeReport runProbe() {
     r.check('DynamicLibrary.open(libnative_opencv.so)', true);
   } catch (e) {
     r.check('DynamicLibrary.open(libnative_opencv.so)', false, '$e');
-    return r; // nothing else can run without the library
+    return r;
   }
 
-  // --- Image-buffer path: OP_GRAYSCALE returns {0xDE,0xAD,0xBE,0xEF} ---
+  // --- Image path: OP_GRAYSCALE on the real sample image ---
   {
     // Dart owns the input buffer AND the result struct; both freed in finally.
-    final input = malloc<Uint8>(1)..value = 0;
+    final input = malloc<Uint8>(sampleBytes.length);
+    input.asTypedList(sampleBytes.length).setAll(0, sampleBytes);
     final out = malloc<OpenCvResult>();
     try {
-      final status = native.process(input, 1, opGrayscale, out);
+      final status = native.process(
+          input, sampleBytes.length, opGrayscale, out);
       r.check('grayscale status == CV_OK(0)', status == 0, 'got $status');
 
       final dataPtr = out.ref.data;
       final len = out.ref.dataLen;
       r.check('grayscale data non-null', dataPtr != nullptr);
-      r.check('grayscale data_len == 4', len == 4, 'got $len');
+      r.check('grayscale data_len is image-sized (> $minRealImageBytes)',
+          len > minRealImageBytes, 'got $len bytes');
 
       if (dataPtr != nullptr && len > 0) {
         // Copy out into Dart-owned memory, THEN free the C buffer.
         final bytes = Uint8List.fromList(dataPtr.asTypedList(len));
-        native.freeBuffer(dataPtr); // C allocator frees what it allocated
-        final hex = bytes
-            .map((b) => b.toRadixString(16).padLeft(2, '0'))
-            .join();
-        r.check('grayscale bytes == deadbeef', hex == 'deadbeef', '0x$hex');
+        native.freeBuffer(dataPtr);
+
+        // PNG magic number: 89 50 4E 47 — proves a real encoded image, not a stub.
+        final isPng = bytes.length >= 4 &&
+            bytes[0] == 0x89 &&
+            bytes[1] == 0x50 &&
+            bytes[2] == 0x4E &&
+            bytes[3] == 0x47;
+        r.check('grayscale bytes are a valid PNG (magic 89 50 4E 47)', isPng);
+        if (isPng) r.grayscaleResult = bytes;
       }
     } finally {
-      malloc.free(input); // Dart frees Dart-allocated input
-      malloc.free(out); //   Dart frees Dart-allocated result struct
+      malloc.free(input);
+      malloc.free(out);
     }
   }
 
-  // --- Scalar path: OP_BLUR_SCORE returns scalar 42.0, data == NULL ---
+  // --- Scalar path: OP_BLUR_SCORE returns scalar 42.0 (still stubbed) ---
   {
     final out = malloc<OpenCvResult>();
     try {
@@ -144,19 +160,26 @@ ProbeReport runProbe() {
 
 // --- UI ------------------------------------------------------------------
 
-void main() => runApp(const ProbeApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final sample = await rootBundle.load('assets/sample.jpg');
+  final sampleBytes = sample.buffer.asUint8List();
+  runApp(ProbeApp(sampleBytes: sampleBytes));
+}
 
 class ProbeApp extends StatelessWidget {
-  const ProbeApp({super.key});
+  const ProbeApp({super.key, required this.sampleBytes});
+
+  final Uint8List sampleBytes;
 
   @override
   Widget build(BuildContext context) {
-    final report = runProbe();
+    final report = runProbe(sampleBytes);
     return MaterialApp(
-      title: 'FFI Toolchain Probe',
+      title: 'FFI Grayscale Probe',
       home: Scaffold(
         appBar: AppBar(
-          title: const Text('FFI Toolchain Probe'),
+          title: const Text('FFI Grayscale Probe'),
           backgroundColor: report.ok ? Colors.green : Colors.red,
         ),
         body: Padding(
@@ -172,7 +195,24 @@ class ProbeApp extends StatelessWidget {
                   color: report.ok ? Colors.green : Colors.red,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              // Before / after: original JPEG vs OpenCV grayscale PNG.
+              Row(
+                children: [
+                  _labelled('Before (sample.jpg)', Image.memory(sampleBytes)),
+                  const SizedBox(width: 12),
+                  _labelled(
+                    'After (OpenCV gray)',
+                    report.grayscaleResult != null
+                        ? Image.memory(report.grayscaleResult!)
+                        : const SizedBox(
+                            height: 120,
+                            child: Center(child: Text('—')),
+                          ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               Expanded(
                 child: ListView(
                   children: report.lines
@@ -188,6 +228,19 @@ class ProbeApp extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _labelled(String label, Widget child) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12)),
+          const SizedBox(height: 4),
+          SizedBox(height: 120, child: child),
+        ],
       ),
     );
   }
