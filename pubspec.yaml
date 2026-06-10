@@ -43,6 +43,13 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
 
+  # On-device integration test (integration_test/ffi_roundtrip_test.dart). This
+  # is a Flutter SDK package; it makes the test run on a real device/emulator
+  # with the actual libnative_opencv.so loaded — the counterpart to the
+  # device-free unit test that mocks the data source.
+  integration_test:
+    sdk: flutter
+
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your
