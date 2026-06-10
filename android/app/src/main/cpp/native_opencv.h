@@ -1,7 +1,7 @@
 // native_opencv.h — THE FFI CONTRACT.
 //
-// This header is the single source of truth the Dart bindings (ffigen) and the
-// C++ implementation both key off. Written before any implementation.
+// This header is the single source of truth the hand-written Dart bindings
+// (lib/core/native/) and the C++ implementation both key off.
 //
 // Design notes (see project plan):
 //  * Single entrypoint `opencv_process`, operation selected by `op_code`.

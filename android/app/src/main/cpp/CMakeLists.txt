@@ -1,9 +1,13 @@
 # CMakeLists.txt — builds libnative_opencv.so
 #
-# This session: STUB ONLY. Builds with zero OpenCV present.
-# The OpenCV wiring below is in place but gated behind WITH_OPENCV (default OFF)
-# so the build is already correct when the SDK arrives next session — flip it on
-# from Gradle with -DWITH_OPENCV=ON -DOPENCV_DIR=<sdk>/sdk/native/jni.
+# Links OpenCV statically (core, imgproc, imgcodecs) into the single .so when
+# WITH_OPENCV=ON, which android/app/build.gradle.kts passes via -DWITH_OPENCV=ON.
+# OPENCV_DIR is resolved below: -DOPENCV_DIR, else the OPENCV_DIR env var, else
+# the in-repo third_party/ SDK.
+#
+# WITH_OPENCV defaults OFF, and the library still builds in that mode:
+# native_opencv.cpp falls back to its no-OpenCV path (guarded by HAVE_OPENCV),
+# which lets the FFI toolchain be validated without the SDK present.
 
 cmake_minimum_required(VERSION 3.18.1)
 project(native_opencv LANGUAGES CXX)
