@@ -92,9 +92,45 @@ int32_t opencv_process(const uint8_t* input, int32_t input_len, int32_t op_code,
     }
 
     case OP_BLUR_SCORE: {
-      // Scalar op: no buffer, fixed metric. Real impl returns Laplacian variance.
+#ifdef HAVE_OPENCV
+      // Variance of the Laplacian — the standard focus/blur measure. Higher
+      // variance = more edge energy = sharper; lower = blurrier. Scalar op:
+      // out->data stays null (set above), only out->scalar is filled.
+      if (input == nullptr || input_len <= 0) {
+        return CV_ERR_INVALID_INPUT;
+      }
+      try {
+        const cv::Mat encoded(1, input_len, CV_8UC1,
+                              const_cast<uint8_t*>(input));
+        const cv::Mat img = cv::imdecode(encoded, cv::IMREAD_COLOR);
+        if (img.empty()) {
+          return CV_ERR_DECODE;
+        }
+
+        cv::Mat gray;
+        cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
+
+        // CV_64F output so squared edge responses don't overflow.
+        cv::Mat laplacian;
+        cv::Laplacian(gray, laplacian, CV_64F);
+
+        cv::Scalar mean;
+        cv::Scalar stddev;
+        cv::meanStdDev(laplacian, mean, stddev);
+
+        // variance = stddev^2 (the "variance of Laplacian" focus measure).
+        out->scalar = stddev[0] * stddev[0];
+        return CV_OK;
+      } catch (const cv::Exception&) {
+        return CV_ERR_NATIVE;  // OpenCV failure -> mapped, never unwinds across FFI
+      } catch (...) {
+        return CV_ERR_NATIVE;
+      }
+#else
+      // No OpenCV: keep the 42.0 stub so the file compiles without the SDK.
       out->scalar = 42.0;
       return CV_OK;
+#endif
     }
 
     default:
