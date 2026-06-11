@@ -1,12 +1,23 @@
 # flutter_ffi_opencv
 
-Flutter ↔ OpenCV over **hand-written `dart:ffi`**, behind a clean layered architecture with a **provable native boundary**.
+Flutter ↔ OpenCV over **hand-written `dart:ffi`**, behind a clean layered architecture with a **provable native boundary** — **one FFI boundary + one shared C++ implementation, running on both Android and iOS**.
 
 The point of this repo is the native boundary done correctly — memory ownership, isolate offloading, and the confinement of `dart:ffi` to a known surface — not "an app that converts an image to grayscale." Two real OpenCV operations (grayscale and a Laplacian-variance blur score) exercise the boundary end to end; the operations are the demo, the boundary is the point.
 
-> Scope: Android (arm64) only at present. iOS is designed-for (the loader seam exists) but not yet build-wired. See [Current scope](#current-scope--roadmap).
+> Scope: **Android and iOS**, both driven from a single shared C++ source (`native/native_opencv.cpp`) through one hand-written FFI boundary. iOS is verified on the **arm64 simulator** with real OpenCV (grayscale + blur, byte-identical to Android — same C++); the one remaining item is device + release builds, which need a Runner Strip Style setting that isn't wired yet ([flutter#62666](https://github.com/flutter/flutter/issues/62666)). See [Current scope](#current-scope--roadmap).
 
-![Before / after grayscale](docs/screenshot.png)
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshot-android.png" alt="Android: grayscale + blur" width="100%">
+      <br><sub><b>Android</b></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshot-ios.png" alt="iOS simulator: grayscale + blur" width="100%">
+      <br><sub><b>iOS (simulator)</b></sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -64,7 +75,9 @@ data/datasources/  OpenCvFfiDataSource    Isolate.run + malloc/free + the native
 core/native/       OpenCvBindings (DynamicLibrary loader) · OpenCvResult (Struct)
                    OpenCvStatus (pure-Dart status mirror, no ffi)
       │ FFI
-native (C++)    libnative_opencv.so   opencv_process() / opencv_free_buffer()  ->  OpenCV
+native (C++)    one shared native_opencv.cpp  ->  libnative_opencv.so (Android)
+                                            \->  native_opencv.framework (iOS)
+                opencv_process() / opencv_free_buffer()  ->  OpenCV
 ```
 
 Actual folder structure under `lib/`:
@@ -117,6 +130,13 @@ Returning a mixed `int/pointer/double` struct *by value* is the fragile AArch64 
 
 **Isolate offloading with a hard boundary.** Each call runs the native work in `Isolate.run`. A `Pointer` or `DynamicLibrary` handle **cannot cross an isolate boundary** — only transferable Dart values do. The worker closure is given a plain `Uint8List` + `int op_code`; *inside* the worker it opens the library, allocates, calls, copies the result into a `Uint8List`/`double`, and frees everything before returning. The worker functions are **top-level** (not instance methods), so `this` can't be captured even by accident — the no-handle-crosses guarantee is structural, not a matter of discipline. Per-call offload is accepted because the operations are user-initiated and infrequent; the method signature is the seam for a persistent worker later.
 
+**One loader, two platforms — both live and tested.** `_open()` in `lib/core/native/opencv_native.dart` branches on the OS, and **both branches are exercised by the on-device integration test** (Android emulator + arm64 iOS simulator):
+
+- **Android** ships the FFI symbols in a standalone `libnative_opencv.so`, loaded by name with `DynamicLibrary.open('libnative_opencv.so')`.
+- **iOS** has no standalone `.so` to open (and forbids `dlopen` of arbitrary paths). Under `use_frameworks!`, the `native_opencv` pod builds as a **dynamic framework** (with OpenCV `-force_load`ed in statically), and its symbols live in the running process's global symbol table — so the loader uses `DynamicLibrary.process()` to resolve them. (A static-lib pod would instead need `DynamicLibrary.executable()`; the dynamic-framework packaging is why `.process()` is the correct call here.)
+
+The platform split is a build-and-load concern only — the C++ above it (`native/native_opencv.cpp`) and every Dart layer are identical across both.
+
 **Hand-written bindings, not ffigen.** The contract is two symbols and one struct. Hand-writing the `lookupFunction` typedefs keeps the actual binding visible in the repo and removes the ffigen + libclang toolchain step for zero benefit at this size. (ffigen would earn its place on a large or churning header.)
 
 **Status → `Failure` mapping** (in `ImageProcessingRepositoryImpl`, above the boundary):
@@ -135,11 +155,15 @@ The native side wraps all `cv::` calls in `try/catch` so an OpenCV exception bec
 
 ---
 
-## Build & run (Android, arm64)
+## Build & run
+
+Both targets compile the **same** shared C++ (`native/native_opencv.cpp`) — Android via CMake, iOS via a CocoaPods dev pod. The OpenCV binary is gitignored on both and resolved the same way (explicit flag/env → in-repo default).
+
+### Android (arm64)
 
 Requires the Flutter SDK (Dart ≥ 3.12) and the Android toolchain (SDK + NDK).
 
-### Provision the OpenCV Android SDK (not committed)
+#### Provision the OpenCV Android SDK (not committed)
 
 The OpenCV Android SDK is hundreds of MB and is **gitignored** (`third_party/opencv-android-sdk/`). Provide it one of three ways — the CMake build resolves `OPENCV_DIR` in this order:
 
@@ -155,7 +179,7 @@ third_party/opencv-android-sdk/sdk/native/jni/OpenCVConfig.cmake
 
 If the SDK is missing, CMake fails loudly with the exact path it tried (not a generic `find_package` error).
 
-### Run
+#### Run
 
 ```bash
 flutter pub get
@@ -170,6 +194,52 @@ What the build does (see `android/app/src/main/cpp/CMakeLists.txt` and `android/
 
 A bundled `assets/sample.jpg` is the input image for the demo screen.
 
+### iOS (arm64 simulator)
+
+Requires the Flutter SDK, Xcode + CocoaPods, and an **arm64 iOS simulator** (Apple Silicon). Verified on the simulator; device + release builds are pending one stripping setting (noted below).
+
+#### Provision the OpenCV iOS xcframework (not committed)
+
+iOS links a from-source **`opencv2.xcframework`** — **not** the prebuilt OpenCV iOS fat framework. The prebuilt one ships a device slice plus an **x86_64-only** simulator slice; it has **no arm64-simulator slice**, so it will not link for the demo on an Apple-Silicon Mac (which runs an arm64 simulator). Building from source lets you produce the arm64-simulator slice the M-series simulator needs.
+
+Like the Android SDK, the xcframework is **gitignored** (`third_party/opencv-ios/`) and resolved by `native_opencv.podspec` in this order:
+
+1. the **`OPENCV_IOS_DIR` environment variable** (must contain `opencv2.xcframework`), else
+2. the **in-repo default**: `third_party/opencv-ios/opencv2.xcframework`.
+
+If it's missing, `pod install` fails loudly with the exact path it tried and how to provision it.
+
+Build it from the OpenCV **4.12.0** source with OpenCV's own `platforms/apple/build_xcframework.py`, including the arm64-simulator slice the M-series Mac needs:
+
+```bash
+python3 platforms/apple/build_xcframework.py \
+  --out build_ios \
+  --iphoneos_archs arm64 \
+  --iphonesimulator_archs arm64
+```
+
+Then place the result so this path exists (or point `OPENCV_IOS_DIR` at its parent):
+
+```
+third_party/opencv-ios/opencv2.xcframework
+```
+
+#### Run
+
+```bash
+flutter pub get
+cd ios && pod install && cd ..
+flutter run                 # on a booted arm64 iOS simulator
+```
+
+What the build does (see `native_opencv.podspec` and `ios/Podfile`):
+
+- The `native_opencv` pod compiles the **same** `native/native_opencv.cpp` as Android (with `HAVE_OPENCV=1` selecting the real `cv::` path, the iOS analogue of the CMake compile-definition) and links OpenCV from the xcframework.
+- Under `use_frameworks!` the pod is a **dynamic framework**; OpenCV's static archive is `-force_load`ed into it so it's self-contained, and `DynamicLibrary.process()` resolves the FFI symbols at runtime.
+- The simulator build is pinned to **arm64** (`EXCLUDED_ARCHS` drops x86_64) so it matches the arm64-only OpenCV simulator slice — otherwise `ld` would drop the OpenCV symbols.
+
+**Remaining item — device + release builds.** Verified on the arm64 simulator; device and release builds still need the Runner target's **Strip Style = Non-Global Symbols** so the FFI symbols survive release stripping ([flutter#62666](https://github.com/flutter/flutter/issues/62666)). Simulator parity is done; this device-hardening step is the one open box.
+
 ---
 
 ## Testing
@@ -177,7 +247,7 @@ A bundled `assets/sample.jpg` is the input image for the demo screen.
 The split is deliberate and is the architectural selling point:
 
 - **Unit (`flutter test`, no device, no `.so`):** `test/features/image_processing/data/repositories/image_processing_repository_impl_test.dart` mocks the `OpenCvDataSource` interface and asserts every `OpenCvException.status` maps to the correct `Failure`, and that success maps to `Right(ProcessedImage)` / `Right(ImageMetric)` — both return shapes. This is everything *above* the boundary.
-- **Integration (on-device):** `integration_test/ffi_roundtrip_test.dart` wires the **real** `OpenCvFfiDataSource` (unmocked) and runs on a device — it loads the actual `libnative_opencv.so` and exercises the real FFI round-trip (real `malloc`/copy/free): grayscale returns a valid, image-sized PNG; blur-score returns a finite, positive Laplacian variance; and invalid input surfaces `DecodeFailure` end-to-end through real FFI. This is the boundary's *mechanism*, complementing the unit test's *payoff* — with both halves real, the unit-vs-integration split is now fully demonstrated. Run it with a device/emulator attached:
+- **Integration (on-device):** `integration_test/ffi_roundtrip_test.dart` wires the **real** `OpenCvFfiDataSource` (unmocked) and runs on a device — loading the actual native library (Android `libnative_opencv.so` / iOS `native_opencv.framework`) and exercising the real FFI round-trip (real `malloc`/copy/free): grayscale returns a valid, image-sized PNG; blur-score returns a finite, positive Laplacian variance; and invalid input surfaces `DecodeFailure` end-to-end through real FFI. It **passes on both an Android emulator and an arm64 iOS simulator** — same test, same C++, exercising both loader branches. This is the boundary's *mechanism*, complementing the unit test's *payoff* — with both halves real, the unit-vs-integration split is now fully demonstrated. Run it with a device/emulator/simulator attached:
 
 ```bash
 flutter test integration_test/ffi_roundtrip_test.dart
@@ -195,15 +265,15 @@ bash tool/check_ffi_boundary.sh
 
 ## Current scope & roadmap
 
-Honest status — two real operations (grayscale image + blur scalar), what is designed but not yet wired, and what is pending:
+Honest status — two real operations (grayscale image + blur scalar), what's verified on each platform, and what's still pending:
 
 - ✅ **Grayscale is real.** `OP_GRAYSCALE` runs `cv::imdecode` → `cv::cvtColor(BGR2GRAY)` → `cv::imencode(".png")` in C++ and returns the encoded PNG across FFI.
 - ✅ **Blur score is real.** `OP_BLUR_SCORE` runs `cv::imdecode` → `cv::cvtColor(BGR2GRAY)` → `cv::Laplacian(CV_64F)` → `cv::meanStdDev`, and returns the **variance of the Laplacian** (the standard focus/blur measure — higher = sharper, lower = blurrier) as a `double` across FFI. Beyond being a real op, it proves the architecture carries the **scalar return shape** alongside the image shape — both flow through the same single-entrypoint mechanism.
-- 🟡 **iOS is designed-for, not wired.** The loader (`lib/core/native/opencv_native.dart`) already branches to `DynamicLibrary.process()` for iOS; the CMake → `.framework`/static build is not yet done, so iOS will not build today.
+- ✅ **iOS works on the arm64 simulator.** The app builds and runs on the arm64 iOS simulator with **real OpenCV** — grayscale (a real ~521 KB PNG) and blur (Laplacian variance), byte-identical to Android because it's the **same** `native/native_opencv.cpp`, linked via a from-source `opencv2.xcframework` and resolved through `DynamicLibrary.process()`. The on-device integration test passes here too. *Remaining item:* device + release builds need the Runner target's **Strip Style = Non-Global Symbols** so the FFI symbols survive release stripping ([flutter#62666](https://github.com/flutter/flutter/issues/62666)) — verified-on-simulator, device-hardening pending (not hidden).
 - ⬜ **Pending:** an image picker (the demo uses a bundled asset) and OpenCV binary-size trimming (custom `BUILD_LIST`).
 
 ---
 
 ## Stack
 
-Flutter · Dart `dart:ffi` (hand-written) · OpenCV (C++, static) · Riverpod (`AsyncNotifier`) · fpdart (`Either`) · Equatable · mocktail. No freezed, no code generation.
+Flutter (**Android + iOS**) · Dart `dart:ffi` (hand-written) · OpenCV (C++, static — Android NDK/CMake `.so`, iOS `opencv2.xcframework` via a CocoaPods dev pod) · Riverpod (`AsyncNotifier`) · fpdart (`Either`) · Equatable · mocktail. No freezed, no code generation.

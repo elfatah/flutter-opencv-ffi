@@ -45,18 +45,22 @@ class OpenCvBindings {
     );
   }
 
-  /// Dual-platform loader. Only Android is wired today; the iOS branch is
-  /// forward-design so iOS becomes a build-only change, not a code change.
+  /// Dual-platform loader. Both branches are live and exercised by the on-device
+  /// integration test (Android emulator + arm64 iOS simulator) — the platform
+  /// difference is purely how the symbols are packaged, not a code-path split.
   static DynamicLibrary _open() {
     if (Platform.isAndroid) {
       // Android ships the symbols in a standalone .so loaded by name.
       return DynamicLibrary.open('libnative_opencv.so');
     }
     if (Platform.isIOS) {
-      // iOS STATICALLY links the FFI symbols into the app executable — there is
-      // no standalone .so to open, and iOS forbids dlopen of arbitrary paths.
-      // .process() resolves against the running process's global symbol table
-      // (executable + statically-linked libs), which is where the symbols live.
+      // iOS has no standalone .so to open, and forbids dlopen of arbitrary paths.
+      // Under use_frameworks!, the native_opencv pod builds as a DYNAMIC framework
+      // (native_opencv.framework, with OpenCV force_load'ed in statically), so the
+      // FFI symbols live in THAT framework — NOT in the main app executable.
+      // .process() resolves against the entire running process (the main image +
+      // every loaded framework), so it finds them. .executable() would FAIL here:
+      // it only searches the main image, where these symbols are not present.
       return DynamicLibrary.process();
     }
     throw UnsupportedError(
