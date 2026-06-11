@@ -209,13 +209,10 @@ Like the Android SDK, the xcframework is **gitignored** (`third_party/opencv-ios
 
 If it's missing, `pod install` fails loudly with the exact path it tried and how to provision it.
 
-Build it from the OpenCV **4.12.0** source with OpenCV's own `platforms/apple/build_xcframework.py`, including the arm64-simulator slice the M-series Mac needs:
+Build it from the OpenCV **4.12.0** source with the committed recipe, which wraps OpenCV's own `platforms/apple/build_xcframework.py` and produces the arm64-simulator slice the M-series Mac needs:
 
 ```bash
-python3 platforms/apple/build_xcframework.py \
-  --out build_ios \
-  --iphoneos_archs arm64 \
-  --iphonesimulator_archs arm64
+OPENCV_SRC=/path/to/opencv-4.12.0 ./scripts/build-opencv-ios.sh
 ```
 
 Then place the result so this path exists (or point `OPENCV_IOS_DIR` at its parent):
@@ -223,6 +220,20 @@ Then place the result so this path exists (or point `OPENCV_IOS_DIR` at its pare
 ```
 third_party/opencv-ios/opencv2.xcframework
 ```
+
+##### Size trim — only the modules this app uses
+
+The recipe is **module-trimmed**: it strips OpenCV down to the only three modules the FFI boundary touches — **`core` / `imgproc` / `imgcodecs`** (grayscale = `cvtColor` + `imencode`/`imdecode`; blur = `Laplacian` + `meanStdDev`). It excludes the ~10 modules outside that dependency closure (`ml`, `dnn`, `video`, `stitching`, `objdetect`, `calib3d`, `features2d`, `flann`, `photo`, `highgui`, `videoio`, plus `gapi`/`objc`) and every image codec except **PNG + JPEG** (PNG is load-bearing — grayscale returns PNG).
+
+Measured result vs. a full-module 4.12.0 build, verified by the same integration test (grayscale → valid PNG, blur → finite Laplacian variance):
+
+| Artifact | Full | Trimmed | Reduction |
+|---|---|---|---|
+| Device slice (`ios-arm64`) | 56 MB | 28 MB | **~50%** |
+| Simulator slice (`ios-arm64-simulator`) | 22 MB | 11 MB | **~50%** |
+| xcframework total | 90 MB | 47 MB | **~48%** |
+
+The exact `--without` / `--disable` list (and why `--build_only_specified_archs` is required to avoid building unwanted macOS/Catalyst slices) lives in [`scripts/build-opencv-ios.sh`](scripts/build-opencv-ios.sh) — a reviewer can run it and reproduce the numbers.
 
 #### Run
 
