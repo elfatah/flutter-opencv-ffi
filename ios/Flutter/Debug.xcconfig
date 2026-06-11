@@ -1,2 +1,6 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
 #include "Generated.xcconfig"
+
+// Match the arm64-only OpenCV simulator slice: build the app arm64-only for the
+// simulator (the M1 simulator is arm64; x86_64 would drop the OpenCV slice).
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64

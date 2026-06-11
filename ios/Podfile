@@ -40,8 +40,9 @@ target 'Runner' do
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
   # Local FFI build glue — compiles the shared native/native_opencv.cpp into the
-  # app. Checkpoint 1: stub only, no OpenCV vendored_frameworks yet.
-  pod 'native_opencv', :path => '../native'
+  # app and links OpenCV. The podspec sits at the repo root (one level up from
+  # ios/) so its vendored xcframework path doesn't escape the pod root.
+  pod 'native_opencv', :path => '..'
 
   target 'RunnerTests' do
     inherit! :search_paths
@@ -51,5 +52,13 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # The OpenCV opencv2.xcframework simulator slice is arm64-only (built for an
+      # M1/Apple-Silicon simulator, no x86_64). Flutter's generic simulator build
+      # would otherwise also build x86_64, and ld drops the arm64-only OpenCV
+      # ("fat file missing arch 'x86_64'") -> every cv:: symbol undefined. Exclude
+      # x86_64 for the simulator so the whole build is arm64, matching the slice.
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'x86_64'
+    end
   end
 end
