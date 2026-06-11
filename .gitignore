@@ -51,3 +51,6 @@ third_party/opencv-android-sdk/
 android/app/.cxx/
 **/*.so
 /.claude/
+
+# OpenCV iOS xcframework — provisioned locally, never committed (Checkpoint 2)
+third_party/opencv-ios/

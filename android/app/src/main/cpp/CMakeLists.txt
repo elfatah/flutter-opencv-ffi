@@ -25,8 +25,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-ffunction-sections -fdata-sections)
 add_link_options(-Wl,--gc-sections)
 
-add_library(native_opencv SHARED native_opencv.cpp)
-target_include_directories(native_opencv PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Shared FFI source lives in the platform-neutral native/ dir at the repo root,
+# so the SAME native_opencv.cpp/.h feed both this Android CMake build and the iOS
+# podspec. This CMakeLists is at android/app/src/main/cpp, so native/ is FIVE
+# levels up (cpp -> main -> src -> app -> android -> repo-root), then down.
+set(_native_src_dir "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../native")
+get_filename_component(_native_src_dir "${_native_src_dir}" ABSOLUTE)
+
+add_library(native_opencv SHARED "${_native_src_dir}/native_opencv.cpp")
+target_include_directories(native_opencv PRIVATE ${_native_src_dir})
 
 # --- OpenCV wiring: present, but OFF until the dedicated SDK-link session. ---
 option(WITH_OPENCV "Link OpenCV (static, selected modules)" OFF)

@@ -1,0 +1,21 @@
+PODS:
+  - Flutter (1.0.0)
+  - native_opencv (0.0.1)
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - native_opencv (from `../native`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  native_opencv:
+    :path: "../native"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  native_opencv: c3b42c6312841d490d02ee743c139874bb4f3833
+
+PODFILE CHECKSUM: 8824fbdb1197e1d0002cb095e0edf8264f623296
+
+COCOAPODS: 1.16.2
