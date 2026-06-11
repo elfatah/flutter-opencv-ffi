@@ -1,21 +1,52 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../../../core/error/failures.dart';
 import '../../domain/entities/processed_image.dart';
 import '../providers/blur_score_controller.dart';
 import '../providers/grayscale_controller.dart';
+import '../providers/source_image_controller.dart';
 
 /// The vertical slice's UI: drives grayscale (image shape) and blur score
 /// (scalar shape) through the full clean stack and renders both.
 class GrayscalePage extends ConsumerWidget {
   const GrayscalePage({super.key});
 
+  /// Picks a photo and feeds its bytes into the SHARED source provider, which
+  /// recomputes both grayscale and blur. This is the only platform/plugin touch
+  /// point — pure presentation. image_picker yields a plain Uint8List, so it
+  /// never crosses the dart:ffi boundary (same role rootBundle plays for the
+  /// default asset).
+  ///
+  /// NOTE (iOS simulator): the simulator's PHPicker cannot return HEIC images —
+  /// pick a JPEG/PNG when testing on the simulator. HEIC works on a real device.
+  Future<void> _pick(WidgetRef ref, ImageSource source) async {
+    final file = await ImagePicker().pickImage(source: source);
+    if (file == null) return; // user cancelled — leave the current source as-is.
+    final bytes = await file.readAsBytes();
+    ref.read(sourceImageControllerProvider.notifier).setImage(bytes);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final grayscale = ref.watch(grayscaleControllerProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('FFI OpenCV — Grayscale')),
+      appBar: AppBar(
+        title: const Text('FFI OpenCV — Grayscale'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.photo_library),
+            tooltip: 'Pick from gallery',
+            onPressed: () => _pick(ref, ImageSource.gallery),
+          ),
+          IconButton(
+            icon: const Icon(Icons.photo_camera),
+            tooltip: 'Take a photo',
+            onPressed: () => _pick(ref, ImageSource.camera),
+          ),
+        ],
+      ),
       body: grayscale.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => Center(
@@ -42,6 +73,11 @@ class _ResultView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final blur = ref.watch(blurScoreControllerProvider);
+    // The "before" image is whatever the shared source currently holds (sample
+    // or a picked photo) — rendered from bytes so it stays honest after a pick.
+    // We reach this branch only once grayscale has data, so the source has
+    // already resolved; value (nullable) is non-null in practice here.
+    final source = ref.watch(sourceImageControllerProvider).value;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -51,8 +87,10 @@ class _ResultView extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _Labelled(
-                label: 'Before (sample.jpg)',
-                child: Image.asset('assets/sample.jpg', fit: BoxFit.contain),
+                label: 'Before (source)',
+                child: source == null
+                    ? const SizedBox.shrink()
+                    : Image.memory(source, fit: BoxFit.contain),
               ),
               const SizedBox(width: 12),
               _Labelled(

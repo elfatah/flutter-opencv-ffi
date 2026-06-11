@@ -232,6 +232,12 @@ cd ios && pod install && cd ..
 flutter run                 # on a booted arm64 iOS simulator
 ```
 
+> **Image picker on the iOS simulator:** pick a **JPEG/PNG**, not HEIC. The
+> simulator's PHPicker cannot return HEIC images (a known Apple simulator
+> limitation) — it works on a real device. The picker needs
+> `NSPhotoLibraryUsageDescription` and `NSCameraUsageDescription` in
+> `ios/Runner/Info.plist` (already wired); without them iOS crashes on pick.
+
 What the build does (see `native_opencv.podspec` and `ios/Podfile`):
 
 - The `native_opencv` pod compiles the **same** `native/native_opencv.cpp` as Android (with `HAVE_OPENCV=1` selecting the real `cv::` path, the iOS analogue of the CMake compile-definition) and links OpenCV from the xcframework.
@@ -270,7 +276,8 @@ Honest status — two real operations (grayscale image + blur scalar), what's ve
 - ✅ **Grayscale is real.** `OP_GRAYSCALE` runs `cv::imdecode` → `cv::cvtColor(BGR2GRAY)` → `cv::imencode(".png")` in C++ and returns the encoded PNG across FFI.
 - ✅ **Blur score is real.** `OP_BLUR_SCORE` runs `cv::imdecode` → `cv::cvtColor(BGR2GRAY)` → `cv::Laplacian(CV_64F)` → `cv::meanStdDev`, and returns the **variance of the Laplacian** (the standard focus/blur measure — higher = sharper, lower = blurrier) as a `double` across FFI. Beyond being a real op, it proves the architecture carries the **scalar return shape** alongside the image shape — both flow through the same single-entrypoint mechanism.
 - ✅ **iOS works on the arm64 simulator.** The app builds and runs on the arm64 iOS simulator with **real OpenCV** — grayscale (a real ~521 KB PNG) and blur (Laplacian variance), byte-identical to Android because it's the **same** `native/native_opencv.cpp`, linked via a from-source `opencv2.xcframework` and resolved through `DynamicLibrary.process()`. The on-device integration test passes here too. *Remaining item:* device + release builds need the Runner target's **Strip Style = Non-Global Symbols** so the FFI symbols survive release stripping ([flutter#62666](https://github.com/flutter/flutter/issues/62666)) — verified-on-simulator, device-hardening pending (not hidden).
-- ⬜ **Pending:** an image picker (the demo uses a bundled asset) and OpenCV binary-size trimming (custom `BUILD_LIST`).
+- ✅ **Image picker (camera + gallery), cross-platform.** The demo defaults to the bundled `assets/sample.jpg` but you can pick a photo from the AppBar; both grayscale and blur recompute off a **shared `sourceImageController`** (`AsyncNotifier<Uint8List>`), which loads the default asset exactly once. The picker is presentation-only (`image_picker`, plain `Uint8List`) — it never crosses the FFI boundary, so the boundary check still passes. iOS uses the two `NS*UsageDescription` keys; modern Android gallery picking uses the system Photo Picker (no storage permission).
+- ⬜ **Pending:** OpenCV binary-size trimming (custom `BUILD_LIST`).
 
 ---
 

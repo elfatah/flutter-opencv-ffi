@@ -1,0 +1,55 @@
+{
+  "object" : {
+    "artifacts" : [
+
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "flutterframework",
+          "kind" : "fileSystem",
+          "location" : "/Users/elfatahwashere/AndroidStudioProjects/flutter_ffi_opencv/ios/Flutter/ephemeral/Packages/.packages/FlutterFramework",
+          "name" : "FlutterFramework"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/elfatahwashere/AndroidStudioProjects/flutter_ffi_opencv/ios/Flutter/ephemeral/Packages/.packages/FlutterFramework"
+        },
+        "subpath" : "flutterframework"
+      },
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "image_picker_ios-0.8.13+6",
+          "kind" : "fileSystem",
+          "location" : "/Users/elfatahwashere/AndroidStudioProjects/flutter_ffi_opencv/ios/Flutter/ephemeral/Packages/.packages/image_picker_ios-0.8.13+6",
+          "name" : "image_picker_ios"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/elfatahwashere/AndroidStudioProjects/flutter_ffi_opencv/ios/Flutter/ephemeral/Packages/.packages/image_picker_ios-0.8.13+6"
+        },
+        "subpath" : "image_picker_ios-0.8.13+6"
+      },
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "integration_test",
+          "kind" : "fileSystem",
+          "location" : "/Users/elfatahwashere/AndroidStudioProjects/flutter_ffi_opencv/ios/Flutter/ephemeral/Packages/.packages/integration_test",
+          "name" : "integration_test"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/elfatahwashere/AndroidStudioProjects/flutter_ffi_opencv/ios/Flutter/ephemeral/Packages/.packages/integration_test"
+        },
+        "subpath" : "integration_test"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

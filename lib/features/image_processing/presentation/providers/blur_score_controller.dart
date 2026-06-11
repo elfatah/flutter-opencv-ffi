@@ -1,9 +1,9 @@
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/entities/image_metric.dart';
 import '../../domain/usecases/image_bytes_params.dart';
 import '../../providers/image_processing_providers.dart';
+import 'source_image_controller.dart';
 
 /// Exposes [AsyncValue<ImageMetric>] to the UI — the SCALAR return shape.
 ///
@@ -14,8 +14,9 @@ import '../../providers/image_processing_providers.dart';
 class BlurScoreController extends AsyncNotifier<ImageMetric> {
   @override
   Future<ImageMetric> build() async {
-    final bytes =
-        (await rootBundle.load('assets/sample.jpg')).buffer.asUint8List();
+    // WATCH (not read) the shared source: picking a new image re-runs build()
+    // and recomputes the blur score off the same bytes the grayscale used.
+    final bytes = await ref.watch(sourceImageControllerProvider.future);
     final result =
         await ref.read(computeBlurScoreProvider)(ImageBytesParams(bytes));
     return result.fold(

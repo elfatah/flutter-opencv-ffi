@@ -39,6 +39,13 @@ dependencies:
   equatable: ^2.0.8
   ffi: ^2.2.0
 
+  # Photo picker (camera + gallery). Presentation-layer only: it produces a
+  # plain Uint8List, the same type rootBundle already feeds the pipeline, so it
+  # never crosses the dart:ffi boundary. On Android 13+ the gallery path uses the
+  # system Photo Picker (no storage permission); iOS needs the two
+  # NS*UsageDescription keys in ios/Runner/Info.plist.
+  image_picker: ^1.1.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -1,9 +1,9 @@
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/entities/processed_image.dart';
 import '../../domain/usecases/image_bytes_params.dart';
 import '../../providers/image_processing_providers.dart';
+import 'source_image_controller.dart';
 
 /// Exposes [AsyncValue<ProcessedImage>] to the UI — the IMAGE return shape.
 ///
@@ -15,8 +15,9 @@ import '../../providers/image_processing_providers.dart';
 class GrayscaleController extends AsyncNotifier<ProcessedImage> {
   @override
   Future<ProcessedImage> build() async {
-    final bytes =
-        (await rootBundle.load('assets/sample.jpg')).buffer.asUint8List();
+    // WATCH (not read) the shared source: picking a new image re-runs build()
+    // and recomputes the grayscale. .future awaits the source's own async load.
+    final bytes = await ref.watch(sourceImageControllerProvider.future);
     final result =
         await ref.read(convertToGrayscaleProvider)(ImageBytesParams(bytes));
     return result.fold(

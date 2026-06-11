@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- image_picker: iOS crashes without these usage descriptions when the
+	     picker is invoked. Photo library = gallery picks; camera = take photo. -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>This app needs photo library access so you can pick an image to process with OpenCV.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app needs camera access so you can take a photo to process with OpenCV.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
